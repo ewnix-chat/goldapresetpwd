@@ -1,14 +1,11 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/go-ldap/ldap/v3"
 	"github.com/rs/cors"
+	"golang.org/x/crypto/bcrypt"
 	"log"
 	"net/http"
 	"os"
@@ -18,18 +15,6 @@ type PasswordResetRequest struct {
 	Username        string `json:"username"`
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
-}
-
-func hashPassword(password string, salt string) string {
-	hash := sha256.New()
-	hash.Write([]byte(password + salt))
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
-func generateSalt() string {
-	salt := make([]byte, 16)
-	rand.Read(salt)
-	return base64.StdEncoding.EncodeToString(salt)
 }
 
 func main() {
@@ -65,11 +50,14 @@ func main() {
 			return
 		}
 
-		salt := generateSalt()
-		hashedPassword := "{CRYPT}" + hashPassword(req.NewPassword, salt)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash new password", http.StatusInternalServerError)
+			return
+		}
 
 		modifyRequest := ldap.NewModifyRequest(fmt.Sprintf("cn=%s,%s", req.Username, ldapUserDN), nil)
-		modifyRequest.Replace("userPassword", []string{hashedPassword})
+		modifyRequest.Replace("userPassword", []string{fmt.Sprintf("{CRYPT}%s", string(hashedPassword))})
 		err = l.Modify(modifyRequest)
 		if err != nil {
 			http.Error(w, "Failed to update password", http.StatusInternalServerError)
